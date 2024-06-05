@@ -636,7 +636,7 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls{
     NSMutableArray<NSURL *> * urls = [[NSMutableArray alloc] initWithCapacity:numberOfItems];
     
     for(MPMediaItemCollection * item in [mediaItemCollection items]) {
-        NSURL * cachedAsset = [FileUtils exportMusicAsset: [item valueForKey:MPMediaItemPropertyAssetURL] withName: [item valueForKey:MPMediaItemPropertyTitle]];
+        NSURL * cachedAsset = [self exportMusicAsset: [item valueForKey:MPMediaItemPropertyAssetURL] withName: [item valueForKey:MPMediaItemPropertyTitle]];
         [urls addObject: cachedAsset];
     }
     
@@ -692,5 +692,71 @@ didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls{
 
 #pragma mark - Alert dialog
 
+- (NSURL*) exportMusicAsset:(NSString*) url withName:(NSString *)name {
+    AVURLAsset *songAsset = [AVURLAsset URLAssetWithURL: (NSURL*)url options:nil];
+    AVAssetExportSession *exporter = [[AVAssetExportSession alloc] initWithAsset: songAsset
+                                                                      presetName:AVAssetExportPresetAppleM4A];
+    
+    exporter.outputFileType =   @"com.apple.m4a-audio";
+    
+    NSString* savePath = [NSTemporaryDirectory() stringByAppendingPathComponent:[name stringByAppendingString:@".m4a"]];
+    NSURL *exportURL = [NSURL fileURLWithPath:savePath];
+    
+    if ([[NSFileManager defaultManager] fileExistsAtPath:savePath]) {
+        return exportURL;
+    }
+    
+    exporter.outputURL = exportURL;
+    
+    dispatch_queue_t queue = dispatch_queue_create("exportQueue", 0);
+    
+    dispatch_async(queue, ^{
+        
+        dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
+        
+        [exporter exportAsynchronouslyWithCompletionHandler:
+         ^{
+            
+            switch (exporter.status)
+            {
+                case AVAssetExportSessionStatusFailed:
+                {
+                    NSError *exportError = exporter.error;
+                    Log(@"AVAssetExportSessionStatusFailed: %@", exportError);
+                    break;
+                }
+                case AVAssetExportSessionStatusCompleted:
+                {
+                    Log(@"AVAssetExportSessionStatusCompleted");
+                    @autoreleasepool {
+                        dispatch_semaphore_signal(semaphore);
+                    }
+                    
+                    if(self->_eventSink != nil) {
+                        self->_eventSink(savePath);
+                    }
+                    
+                    break;
+                }
+                case AVAssetExportSessionStatusCancelled:
+                {
+                    Log(@"AVAssetExportSessionStatusCancelled");
+                    @autoreleasepool {
+                        dispatch_semaphore_signal(semaphore);
+                    }
+                    break;
+                }
+                default:
+                {
+                    Log(@"didn't get export status");
+                    break;
+                }
+            }
+        }];
+        
+        dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
+    });
+    return exportURL;
+}
 
 @end
